@@ -82,6 +82,10 @@ This will ensure your user can access the PWM files after every boot, and you wo
 - Sending a `linear.x` value of **-1000** fully **closes** the gripper.
 - A value of `0` centers the gripper.
 
+```bash
+ros2 topic pub -1 /cmd_vel_testicle_twister geometry_msgs/msg/Twist "{linear: {x: 1000.000, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
+```
+
 ## Troubleshooting
 
 - If you get permission errors, check your udev rules or run with `sudo`.
