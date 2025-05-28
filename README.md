@@ -36,7 +36,7 @@ ROS2 package for controlling a gripper servo via PWM on Raspberry Pi (tested on 
 If you do not want to run the node with `sudo`, you can automate fixing permissions for the PWM sysfs files at boot using a systemd service:
 
 1. **Create the script:**
-   ```bash
+```bash
    sudo tee /usr/local/bin/fix_pwm_permissions.sh > /dev/null <<'EOF'
 #!/bin/bash
 chmod 666 /sys/class/pwm/pwmchip0/export
@@ -48,7 +48,7 @@ if [ -d /sys/class/pwm/pwmchip0/pwm0 ]; then
 fi
 EOF
 sudo chmod +x /usr/local/bin/fix_pwm_permissions.sh
-   ```
+```
 
 2. **Create the systemd service:**
    ```bash
