@@ -38,8 +38,5 @@ def generate_launch_description():
                 'pwm_chip': LaunchConfiguration('pwm_chip'),
                 'pwm_channel': LaunchConfiguration('pwm_channel'),
             }],
-            # Note: May need to run with sudo for GPIO access
-            # Uncomment the next line if needed:
-            # prefix=['sudo']
         )
     ])

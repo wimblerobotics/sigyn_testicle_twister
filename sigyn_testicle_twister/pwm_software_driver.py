@@ -2,14 +2,17 @@ import os
 import time
 import threading
 import atexit
+import subprocess
 import gpiod
+import ctypes
+import ctypes.util
 
 class SoftwarePWMDriver:
     """
-    Software PWM driver for Raspberry Pi 5 using GPIO libgpiod interface.
+    High-precision Software PWM driver for Raspberry Pi 5 using GPIO libgpiod interface.
     
-    This is a workaround for hardware PWM issues on Pi 5 with Ubuntu 24.04
-    where the RP1 PWM clock driver has known issues with kernel 6.8.0.
+    This implementation uses clock_nanosleep for precise timing and minimizes jitter
+    even under high CPU load conditions.
     """
     
     def __init__(self, gpio_pin=18, logger=None):
@@ -30,17 +33,85 @@ class SoftwarePWMDriver:
         self.chip = None
         self.line = None
 
+        # Setup high-precision timing
+        self._setup_high_precision_timing()
+
         # Register cleanup on exit
         atexit.register(self.cleanup)
+
+        # Try to set real-time scheduling for better PWM timing
+        self._setup_realtime_scheduling()
 
         # Open the GPIO chip and request the line
         self._open_gpio()
         self._write_value(0)  # Initialize to low
 
         if self.logger:
-            self.logger.info(f"Software PWM (libgpiod) initialized on GPIO {self.logical_gpio}")
+            self.logger.info(f"High-precision Software PWM (libgpiod) initialized on GPIO {self.logical_gpio}")
         else:
-            print(f"Software PWM (libgpiod) initialized on GPIO {self.logical_gpio}")
+            print(f"High-precision Software PWM (libgpiod) initialized on GPIO {self.logical_gpio}")
+
+    def _setup_high_precision_timing(self):
+        """Setup high-precision timing using clock_nanosleep"""
+        try:
+            # Load libc for clock_nanosleep
+            libc_name = ctypes.util.find_library('c')
+            if libc_name:
+                self.libc = ctypes.CDLL(libc_name)
+                # Define clock_nanosleep function signature
+                self.libc.clock_nanosleep.argtypes = [
+                    ctypes.c_int,    # clockid_t clock_id
+                    ctypes.c_int,    # int flags  
+                    ctypes.POINTER(ctypes.c_long * 2),  # const struct timespec *request
+                    ctypes.POINTER(ctypes.c_long * 2)   # struct timespec *remain
+                ]
+                self.libc.clock_nanosleep.restype = ctypes.c_int
+                
+                # CLOCK_MONOTONIC = 1, TIMER_ABSTIME = 1
+                self.CLOCK_MONOTONIC = 1
+                self.TIMER_ABSTIME = 1
+                
+                # Get current time function
+                self.libc.clock_gettime.argtypes = [
+                    ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_long * 2)
+                ]
+                self.libc.clock_gettime.restype = ctypes.c_int
+                
+                self.high_precision_available = True
+                if self.logger:
+                    self.logger.info("High-precision timing (clock_nanosleep) available")
+            else:
+                self.high_precision_available = False
+                if self.logger:
+                    self.logger.warn("High-precision timing not available, falling back to time.sleep")
+        except Exception as e:
+            self.high_precision_available = False
+            if self.logger:
+                self.logger.warn(f"Failed to setup high-precision timing: {e}")
+
+    def _get_monotonic_time_ns(self):
+        """Get current monotonic time in nanoseconds"""
+        if self.high_precision_available:
+            ts = (ctypes.c_long * 2)()
+            self.libc.clock_gettime(self.CLOCK_MONOTONIC, ts)
+            return ts[0] * 1000000000 + ts[1]
+        else:
+            return int(time.time_ns())
+
+    def _sleep_until_ns(self, target_time_ns):
+        """Sleep until target time with high precision"""
+        if self.high_precision_available:
+            ts = (ctypes.c_long * 2)()
+            ts[0] = target_time_ns // 1000000000
+            ts[1] = target_time_ns % 1000000000
+            self.libc.clock_nanosleep(self.CLOCK_MONOTONIC, self.TIMER_ABSTIME, ts, None)
+        else:
+            current_time = time.time_ns()
+            if target_time_ns > current_time:
+                sleep_time = (target_time_ns - current_time) / 1000000000.0
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
     def _open_gpio(self):
         """Open the GPIO chip and request the line for output (Pi 5: always /dev/gpiochip4)"""
@@ -77,29 +148,99 @@ class SoftwarePWMDriver:
                 self.logger.error(f"Failed to write GPIO value: {e}")
             return False
 
-    def _pwm_loop(self):
-        """Main PWM generation loop running in a separate thread"""
-        while not self._stop_event.is_set():
-            # Calculate timing
-            period_us = self.period_ns / 1000.0  # Convert to microseconds
-            duty_us = self.duty_ns / 1000.0      # Convert to microseconds
+    def _setup_realtime_scheduling(self):
+        """Set up real-time scheduling for better PWM timing"""
+        try:
+            pid = os.getpid()
             
-            if period_us <= 0:
+            # Set real-time FIFO scheduling with highest priority (99)
+            result = subprocess.run([
+                'sudo', 'chrt', '-f', '-p', '99', str(pid)
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                if self.logger:
+                    self.logger.info(f"Real-time FIFO scheduling (priority 99) set for PID {pid}")
+                else:
+                    print(f"Real-time FIFO scheduling (priority 99) set for PID {pid}")
+            else:
+                if self.logger:
+                    self.logger.warn(f"Failed to set real-time scheduling: {result.stderr}")
+                else:
+                    print(f"Failed to set real-time scheduling: {result.stderr}")
+            
+            # Set CPU affinity to CPU 3 (last core) for isolation
+            result = subprocess.run([
+                'sudo', 'taskset', '-cp', '3', str(pid)
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                if self.logger:
+                    self.logger.info(f"CPU affinity set to CPU 3 for PID {pid}")
+                else:
+                    print(f"CPU affinity set to CPU 3 for PID {pid}")
+            else:
+                if self.logger:
+                    self.logger.warn(f"Failed to set CPU affinity: {result.stderr}")
+                else:
+                    print(f"Failed to set CPU affinity: {result.stderr}")
+            
+            # Set I/O priority to real-time class
+            result = subprocess.run([
+                'sudo', 'ionice', '-c', '1', '-n', '0', '-p', str(pid)
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                if self.logger:
+                    self.logger.info(f"Real-time I/O priority set for PID {pid}")
+                else:
+                    print(f"Real-time I/O priority set for PID {pid}")
+            else:
+                if self.logger:
+                    self.logger.warn(f"Failed to set I/O priority: {result.stderr}")
+                    
+        except Exception as e:
+            if self.logger:
+                self.logger.warn(f"Real-time scheduling setup failed: {e}")
+            else:
+                print(f"Real-time scheduling setup failed: {e}")
+
+    def _pwm_loop(self):
+        """High-precision PWM generation loop with jitter compensation"""
+        # Get initial time
+        start_time = self._get_monotonic_time_ns()
+        cycle_count = 0
+        
+        while not self._stop_event.is_set():
+            # Calculate current cycle timing
+            current_period_ns = self.period_ns
+            current_duty_ns = self.duty_ns
+            
+            if current_period_ns <= 0:
                 time.sleep(0.01)  # 10ms delay if invalid period
                 continue
             
-            high_time_us = duty_us
-            low_time_us = period_us - duty_us
+            # Calculate absolute timing for this cycle
+            cycle_start = start_time + (cycle_count * current_period_ns)
+            high_end = cycle_start + current_duty_ns
+            cycle_end = cycle_start + current_period_ns
             
             # High phase
-            if high_time_us > 0:
+            if current_duty_ns > 0:
                 self._write_value(1)
-                time.sleep(high_time_us / 1000000.0)  # Convert to seconds
+                self._sleep_until_ns(high_end)
             
-            # Low phase  
-            if low_time_us > 0:
+            # Low phase
+            if current_duty_ns < current_period_ns:
                 self._write_value(0)
-                time.sleep(low_time_us / 1000000.0)   # Convert to seconds
+                self._sleep_until_ns(cycle_end)
+            
+            cycle_count += 1
+            
+            # Reset cycle counter periodically to prevent overflow
+            if cycle_count > 1000000:  # Reset every 1M cycles
+                start_time = self._get_monotonic_time_ns()
+                cycle_count = 0
         
         # Ensure GPIO is low when stopped
         self._write_value(0)
