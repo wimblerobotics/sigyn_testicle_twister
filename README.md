@@ -7,10 +7,21 @@ ROS2 package for controlling a gripper servo via PWM on Raspberry Pi (tested on 
 ## Setup
 
 1. **Enable PWM in `/boot/firmware/config.txt`:**
+   
+   For **Raspberry Pi 5**, add to the `[pi5]` section:
    ```
+   [pi5]
+   dtoverlay=pwm-2chan
+   dtparam=audio=off
+   ```
+   
+   For **Raspberry Pi 4 and earlier**, add to the `[all]` section:
+   ```
+   [all]
    dtoverlay=pwm
    dtparam=audio=off
    ```
+   
    Reboot after editing.
 
 2. **Permissions:**  
@@ -39,13 +50,35 @@ If you do not want to run the node with `sudo`, you can automate fixing permissi
    ```bash
    sudo tee /usr/local/bin/fix_pwm_permissions.sh > /dev/null <<'EOF'
 #!/bin/bash
-chmod 666 /sys/class/pwm/pwmchip0/export
-chmod 666 /sys/class/pwm/pwmchip0/unexport
-if [ -d /sys/class/pwm/pwmchip0/pwm0 ]; then
-    chmod 666 /sys/class/pwm/pwmchip0/pwm0/period
-    chmod 666 /sys/class/pwm/pwmchip0/pwm0/duty_cycle
-    chmod 666 /sys/class/pwm/pwmchip0/pwm0/enable
-fi
+# Fix PWM permissions for Raspberry Pi 5 (pwmchip2)
+# This script must run after PWM channels are exported
+
+# Make export/unexport writable for all chips
+for chip in /sys/class/pwm/pwmchip*; do
+    if [ -d "$chip" ]; then
+        chmod 666 "$chip/export" 2>/dev/null || true
+        chmod 666 "$chip/unexport" 2>/dev/null || true
+    fi
+done
+
+# Export PWM channels if not already exported
+echo 0 > /sys/class/pwm/pwmchip2/export 2>/dev/null || true
+echo 1 > /sys/class/pwm/pwmchip2/export 2>/dev/null || true
+
+# Wait for pwm directories to be created
+sleep 0.5
+
+# Fix permissions for exported PWM channels
+for pwm_dir in /sys/class/pwm/pwmchip*/pwm*; do
+    if [ -d "$pwm_dir" ]; then
+        chmod 666 "$pwm_dir/period" 2>/dev/null || true
+        chmod 666 "$pwm_dir/duty_cycle" 2>/dev/null || true
+        chmod 666 "$pwm_dir/enable" 2>/dev/null || true
+        chmod 666 "$pwm_dir/polarity" 2>/dev/null || true
+    fi
+done
+
+echo "PWM permissions fixed for Pi 5"
 EOF
 sudo chmod +x /usr/local/bin/fix_pwm_permissions.sh
    ```
