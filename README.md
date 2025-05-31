@@ -4,25 +4,40 @@
 
 ROS2 package for controlling a gripper servo via PWM on Raspberry Pi. 
 
-**IMPORTANT**: This package now includes both hardware and software PWM drivers. **Software PWM is recommended for Raspberry Pi 5** due to hardware PWM issues with Ubuntu 24.04 kernel 6.8.0.
+**IMPORTANT**: This package includes three PWM drivers:
+1. **PCA9685 PWM (Recommended)** - 16-channel I2C PWM controller, best compatibility
+2. **Software PWM** - GPIO-based PWM for direct GPIO control 
+3. **Hardware PWM** - System PWM using sysfs interface
+
+**PCA9685 is the default and recommended driver** for reliable servo control across all Raspberry Pi models.
 
 ## Quick Start
 
-For Raspberry Pi 5 (recommended):
+**Default (PCA9685 - Recommended):**
 ```bash
-sudo ros2 launch sigyn_testicle_twister sigyn_testicle_twister.launch.py use_software_pwm:=true gpio_pin:=18
+ros2 launch sigyn_testicle_twister sigyn_testicle_twister.launch.py
 ```
 
-For Raspberry Pi 4 (hardware PWM):
+**PCA9685 with custom settings:**
 ```bash
-sudo ros2 launch sigyn_testicle_twister sigyn_testicle_twister.launch.py use_software_pwm:=false
+ros2 launch sigyn_testicle_twister sigyn_testicle_twister.launch.py pwm_driver_type:=pca9685 i2c_address:=64 pwm_channel:=0
 ```
 
-## Complete Setup Guide for Ubuntu 24.04 on Raspberry Pi 5
+**Software PWM (GPIO-based):**
+```bash
+sudo ros2 launch sigyn_testicle_twister sigyn_testicle_twister.launch.py pwm_driver_type:=software gpio_pin:=18
+```
+
+**Hardware PWM (sysfs-based):**
+```bash
+sudo ros2 launch sigyn_testicle_twister sigyn_testicle_twister.launch.py pwm_driver_type:=hardware pwm_chip:=1 pwm_channel:=0
+```
+
+## Complete Setup Guide for Ubuntu 24.04 on Raspberry Pi
 
 ### 1. Initial System Setup
 
-After installing Ubuntu 24.04 on your Raspberry Pi 5, perform these steps:
+After installing Ubuntu 24.04 on your Raspberry Pi, perform these steps:
 
 #### Update the system:
 ```bash
@@ -33,40 +48,59 @@ sudo apt update && sudo apt upgrade -y
 ```bash
 sudo apt install -y build-essential cmake git python3-pip
 sudo apt install -y ros-jazzy-desktop ros-jazzy-geometry-msgs
+sudo apt install -y i2c-tools python3-smbus python3-dev
 ```
 
-#### Enable camera (if needed):
+#### Enable I2C (for PCA9685):
 ```bash
 # Edit /boot/firmware/config.txt
 sudo nano /boot/firmware/config.txt
 
 # Add these lines:
-camera_auto_detect=0
-dtoverlay=imx708,cam0
-# OR for older cameras:
-# dtoverlay=imx219,cam0
+dtparam=i2c_arm=on
+dtparam=i2c1=on
 ```
 
-#### Setup GPIO permissions:
+#### Install Python dependencies:
 ```bash
+pip3 install smbus2 gpiod
+```
+
+#### Setup I2C permissions:
+```bash
+sudo usermod -a -G i2c $USER
 sudo usermod -a -G gpio $USER
 sudo usermod -a -G dialout $USER
 # Log out and log back in for groups to take effect
 ```
 
-### 2. PWM Configuration
+### 2. Hardware Setup
 
-#### For Raspberry Pi 5 (Software PWM - Recommended):
-No device tree overlay changes needed! **Hardware PWM is not supported on Pi 5 with Ubuntu 24.04.** The software PWM driver handles everything. Do not attempt to edit `/boot/firmware/config.txt` for PWM on Pi 5.
+#### Option A: PCA9685 PWM Controller (Recommended)
 
-#### For Raspberry Pi 4 (Hardware PWM):
-Edit `/boot/firmware/config.txt`:
+The PCA9685 is a 16-channel PWM controller that communicates via I2C. It's the most reliable option for servo control.
+
+**PCA9685 Connections:**
+| PCA9685 Pin | Raspberry Pi Pin | Description |
+|-------------|------------------|-------------|
+| VCC         | Pin 1 (3.3V)     | Power supply |
+| GND         | Pin 6 (GND)      | Ground |
+| SDA         | Pin 3 (GPIO 2)   | I2C Data |
+| SCL         | Pin 5 (GPIO 3)   | I2C Clock |
+
+**Servo Connections to PCA9685:**
+| Servo Wire  | PCA9685 Pin | Description |
+|-------------|-------------|-------------|
+| Signal      | PWM 0-15    | PWM Signal (use channel 0 by default) |
+| Power       | V+          | Servo Power (connect to external 5V) |
+| Ground      | GND         | Ground |
+
+**Verify I2C Connection:**
 ```bash
-sudo nano /boot/firmware/config.txt
+# Check I2C devices
+sudo i2cdetect -y 1
 
-# Add these lines:
-dtoverlay=pwm
-dtparam=audio=off
+# You should see the PCA9685 at address 0x40 (64 decimal)
 ```
 
 ### 3. ROS2 Workspace Setup

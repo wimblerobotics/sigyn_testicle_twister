@@ -12,7 +12,11 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', ['launch/sigyn_testicle_twister.launch.py']),
     ],
-    install_requires=['setuptools'],
+    install_requires=[
+        'setuptools',
+        'smbus2',  # Required for PCA9685 I2C communication
+        'gpiod',   # Required for software PWM (GPIO control)
+    ],
     zip_safe=True,
     maintainer='Michael Wimble',
     maintainer_email='mike@wimblerobotics.com',
