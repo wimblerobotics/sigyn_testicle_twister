@@ -18,13 +18,19 @@ class SigynTesticleTwisterNode(Node):
             i2c_bus = self.declare_parameter('i2c_bus', 1).value
             pwm_channel = self.declare_parameter('pwm_channel', 0).value
             pwm_frequency = self.declare_parameter('pwm_frequency', 50).value
-            self.driver = PCA9685PWMDriver(
-                i2c_address=i2c_address,
-                i2c_bus=i2c_bus,
-                channel=pwm_channel,
-                frequency=pwm_frequency,
-                logger=self.get_logger()
-            )
+            try:
+                self.driver = PCA9685PWMDriver(
+                    i2c_address=i2c_address,
+                    i2c_bus=i2c_bus,
+                    channel=pwm_channel,
+                    frequency=pwm_frequency,
+                    logger=self.get_logger()
+                )
+            except Exception as e:
+                self.get_logger().error(f"PCA9685 initialization failed: {e}")
+                self.get_logger().warn("Falling back to Software PWM")
+                gpio_pin = self.declare_parameter('gpio_pin', 18).value
+                self.driver = SoftwarePWMDriver(gpio_pin=gpio_pin, logger=self.get_logger())
         elif pwm_driver_type == 'software':
             self.get_logger().info("Using Software PWM (GPIO-based)")
             gpio_pin = self.declare_parameter('gpio_pin', 18).value

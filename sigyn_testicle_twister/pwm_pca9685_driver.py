@@ -78,12 +78,21 @@ class PCA9685PWMDriver:
         # Connect to I2C bus
         try:
             self.bus = smbus2.SMBus(i2c_bus)
+            # Test connection by attempting to read a register
+            time.sleep(0.05)  # 50ms initial delay for stabilization
+            test_read = self.bus.read_byte_data(i2c_address, self.MODE1)
+            if self.logger:
+                self.logger.info(f"PCA9685 connection test successful, MODE1=0x{test_read:02x}")
+            else:
+                print(f"[INFO] PCA9685 connection test successful, MODE1=0x{test_read:02x}")
         except Exception as e:
-            error_msg = f"Failed to initialize I2C bus {i2c_bus}: {e}"
+            error_msg = f"Failed to initialize I2C bus {i2c_bus} or connect to PCA9685 at 0x{i2c_address:02x}: {e}"
             if self.logger:
                 self.logger.error(error_msg)
+                self.logger.error("Possible causes: 1) Wiring issues 2) Power supply problems 3) I2C timing issues 4) Address conflicts")
             else:
                 print(f"[ERROR] {error_msg}")
+                print("[ERROR] Possible causes: 1) Wiring issues 2) Power supply problems 3) I2C timing issues 4) Address conflicts")
             raise
         
         # Initialize PCA9685
@@ -99,33 +108,66 @@ class PCA9685PWMDriver:
 
     def _write_register(self, reg, value):
         """Write a value to a PCA9685 register"""
-        try:
-            self.bus.write_byte_data(self.i2c_address, reg, value)
-        except Exception as e:
-            error_msg = f"Failed to write to register 0x{reg:02x}: {e}"
-            if self.logger:
-                self.logger.error(error_msg)
-            else:
-                print(f"[ERROR] {error_msg}")
-            raise
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                self.bus.write_byte_data(self.i2c_address, reg, value)
+                time.sleep(0.001)  # 1ms delay after write
+                return  # Success
+            except Exception as e:
+                error_msg = f"Failed to write to register 0x{reg:02x} (attempt {attempt + 1}/{max_retries}): {e}"
+                if self.logger:
+                    self.logger.warn(error_msg)
+                else:
+                    print(f"[WARN] {error_msg}")
+                
+                if attempt < max_retries - 1:
+                    time.sleep(0.01)  # 10ms delay before retry
+                else:
+                    # Final attempt failed
+                    if self.logger:
+                        self.logger.error(f"All attempts failed for register 0x{reg:02x}")
+                    else:
+                        print(f"[ERROR] All attempts failed for register 0x{reg:02x}")
+                    raise
 
     def _read_register(self, reg):
         """Read a value from a PCA9685 register"""
-        try:
-            return self.bus.read_byte_data(self.i2c_address, reg)
-        except Exception as e:
-            error_msg = f"Failed to read from register 0x{reg:02x}: {e}"
-            if self.logger:
-                self.logger.error(error_msg)
-            else:
-                print(f"[ERROR] {error_msg}")
-            raise
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Add a small delay before reading
+                time.sleep(0.001)  # 1ms delay
+                value = self.bus.read_byte_data(self.i2c_address, reg)
+                return value
+            except Exception as e:
+                error_msg = f"Failed to read from register 0x{reg:02x} (attempt {attempt + 1}/{max_retries}): {e}"
+                if self.logger:
+                    self.logger.warn(error_msg)
+                else:
+                    print(f"[WARN] {error_msg}")
+                
+                if attempt < max_retries - 1:
+                    time.sleep(0.01)  # 10ms delay before retry
+                else:
+                    # Final attempt failed
+                    if self.logger:
+                        self.logger.error(f"All attempts failed for register 0x{reg:02x}")
+                    else:
+                        print(f"[ERROR] All attempts failed for register 0x{reg:02x}")
+                    raise
 
     def _initialize(self):
         """Initialize PCA9685 chip"""
+        # Add initial delay for chip stabilization
+        time.sleep(0.01)  # 10ms delay
+        
         # Reset to default
         self._write_register(self.MODE1, 0x00)
+        time.sleep(0.005)  # Wait after reset
+        
         self._write_register(self.MODE2, self.OUTDRV)
+        time.sleep(0.005)  # Wait after mode2 setup
         
         # Configure MODE1 for auto-increment
         self._write_register(self.MODE1, self.AI)
