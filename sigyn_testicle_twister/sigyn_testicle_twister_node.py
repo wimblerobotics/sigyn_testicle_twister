@@ -2,11 +2,26 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from .pwm_driver import PWMDriver
+from .pwm_software_driver import SoftwarePWMDriver
 
 class SigynTesticleTwisterNode(Node):
     def __init__(self):
         super().__init__('sigyn_testicle_twister_node')
-        self.driver = PWMDriver(logger=self.get_logger())
+        
+        # Use software PWM driver for Pi 5 compatibility
+        # Hardware PWM has issues on Pi 5 with Ubuntu 24.04 kernel 6.8.0
+        self.use_software_pwm = self.declare_parameter('use_software_pwm', True).value
+        
+        if self.use_software_pwm:
+            self.get_logger().info("Using Software PWM (recommended for Pi 5)")
+            gpio_pin = self.declare_parameter('gpio_pin', 18).value  # Default GPIO 18 (Pin 12)
+            self.driver = SoftwarePWMDriver(gpio_pin=gpio_pin, logger=self.get_logger())
+        else:
+            self.get_logger().info("Using Hardware PWM (may not work on Pi 5)")
+            pwm_chip = self.declare_parameter('pwm_chip', 1).value
+            pwm_channel = self.declare_parameter('pwm_channel', 0).value
+            self.driver = PWMDriver(chip=pwm_chip, channel=pwm_channel, logger=self.get_logger())
+        
         self.subscription = self.create_subscription(
             Twist,
             'cmd_vel_testicle_twister',
